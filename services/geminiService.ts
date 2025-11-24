@@ -6,6 +6,29 @@ import { QuizQuestion, QuestionType, EvaluationResult } from '../types';
 declare const pdfjsLib: any;
 
 /**
+ * Safely retrieves the API key from the environment.
+ * Handles cases where process is not defined (browser) or Vite env vars are used.
+ */
+const getApiKey = (): string => {
+  try {
+    // Check standard process.env (Node/Webpack/Polyfill)
+    if (typeof process !== 'undefined' && process.env?.API_KEY) {
+      return process.env.API_KEY;
+    }
+    // Check Vite-specific env (common in Netlify deployments)
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_KEY) {
+      // @ts-ignore
+      return import.meta.env.VITE_API_KEY;
+    }
+  } catch (e) {
+    console.warn("Error accessing environment variables:", e);
+  }
+  
+  throw new Error("API Key is missing. Please set the 'API_KEY' (or 'VITE_API_KEY') environment variable in your Netlify Site Settings.");
+};
+
+/**
  * Extracts text content from an uploaded PDF file.
  */
 export async function extractTextFromPdf(file: File): Promise<string> {
@@ -105,11 +128,8 @@ export async function generateQuiz(
   questionType: QuestionType,
   examContext: string
 ): Promise<QuizQuestion[]> {
-  if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-  }
-
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey });
 
   let typeInstructions = "";
   
@@ -157,7 +177,26 @@ export async function generateQuiz(
   ---
   `;
 
+  // Helper to parse and validate
+  const processResponse = (jsonString: string) => {
+      const parsed = JSON.parse(jsonString);
+      if (!parsed.questions || !Array.isArray(parsed.questions)) {
+        throw new Error("Invalid response format from AI. Expected a 'questions' array.");
+      }
+      return parsed.questions.map((q: any) => ({
+          type: questionType, 
+          question: q.question,
+          options: q.options || [],
+          correctAnswer: q.correctAnswer || "",
+          modelAnswer: q.modelAnswer || "",
+          context: q.context || "",
+          explanation: q.explanation || "",
+          marks: getMarksForType(questionType)
+      }));
+  };
+
   try {
+    // Attempt with Gemini 3 Pro (Preferred for logic/topper answers)
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: prompt,
@@ -167,29 +206,27 @@ export async function generateQuiz(
       },
     });
 
-    const jsonString = response.text.trim();
-    const parsed = JSON.parse(jsonString);
+    return processResponse(response.text.trim());
 
-    if (!parsed.questions || !Array.isArray(parsed.questions)) {
-      throw new Error("Invalid response format from AI. Expected a 'questions' array.");
+  } catch (error: any) {
+    console.warn("Gemini 3 Pro failed, retrying with Gemini 2.5 Flash...", error);
+    
+    // Fallback to Gemini 2.5 Flash for stability/speed if 3 Pro is unavailable/errored
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: quizSchema,
+            },
+        });
+        return processResponse(response.text.trim());
+    } catch (retryError: any) {
+        console.error("Gemini generation failed:", retryError);
+        const msg = retryError.message || error.message || "Unknown error";
+        throw new Error(`AI Generation Failed: ${msg}. Please check your API Key and Quota.`);
     }
-
-    // Map and Validate
-    const validatedQuestions: QuizQuestion[] = parsed.questions.map((q: any) => ({
-        type: questionType, // Enforce the requested type
-        question: q.question,
-        options: q.options || [],
-        correctAnswer: q.correctAnswer || "",
-        modelAnswer: q.modelAnswer || "",
-        context: q.context || "",
-        explanation: q.explanation || "",
-        marks: getMarksForType(questionType) // Assign marks based on type
-    }));
-
-    return validatedQuestions;
-  } catch (error) {
-    console.error("Error generating quiz with Gemini:", error);
-    throw new Error("Failed to generate quiz. The AI model might be unavailable or the content could not be processed.");
   }
 }
 
@@ -203,11 +240,8 @@ export async function evaluateAnswer(
   mimeType: string,
   maxMarks: number
 ): Promise<EvaluationResult> {
-    if (!process.env.API_KEY) {
-        throw new Error("API_KEY environment variable not set");
-    }
-
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = getApiKey();
+    const ai = new GoogleGenAI({ apiKey });
     
     const evaluationSchema = {
       type: Type.OBJECT,
@@ -253,8 +287,8 @@ export async function evaluateAnswer(
 
         const jsonString = response.text.trim();
         return JSON.parse(jsonString) as EvaluationResult;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error evaluating answer:", error);
-        throw new Error("Failed to evaluate answer. Please try again.");
+        throw new Error(`Evaluation failed: ${error.message || "Please check your API Key."}`);
     }
 }
