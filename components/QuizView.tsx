@@ -41,7 +41,8 @@ const QuizView: React.FC<QuizViewProps> = ({
 
   const isSubjective = ['Short', 'VeryShort', 'Long', 'CaseBased', 'ExtractBased'].includes(question.type);
 
-  // Reset state when question changes
+  // Reset state ONLY when question changes. 
+  // IMPORTANT: Do NOT include 'userAnswer' in dependency array, or it will wipe evaluation when we set the answer.
   useEffect(() => {
     setTextInput(question.type === 'FillBlanks' && userAnswer ? userAnswer : '');
     setSelectedFile(null);
@@ -49,7 +50,7 @@ const QuizView: React.FC<QuizViewProps> = ({
     setShowModelAnswer(false);
     setShowMistakes(false);
     setIsEvaluating(false);
-  }, [question, userAnswer]);
+  }, [question]);
 
   useEffect(() => {
     if (!expiryTime) {
@@ -99,34 +100,51 @@ const QuizView: React.FC<QuizViewProps> = ({
       if (!selectedFile) return;
       
       setIsEvaluating(true);
-      try {
-        // Convert to Base64
-        const reader = new FileReader();
-        reader.readAsDataURL(selectedFile);
-        reader.onloadend = async () => {
-            const base64String = (reader.result as string).split(',')[1];
-            
-            // Determine max marks based on type (heuristic)
-            const maxMarks = question.type === 'VeryShort' ? 2 : question.type === 'Short' ? 3 : 5;
+      
+      const reader = new FileReader();
+      
+      reader.onload = async (e) => {
+        if (!e.target?.result || typeof e.target.result !== 'string') {
+            setIsEvaluating(false);
+            alert("Error: Could not process the image file.");
+            return;
+        }
 
-            try {
-                const result = await evaluateAnswer(question.question, question.modelAnswer || '', base64String, maxMarks);
-                setEvaluation(result);
-                onAnswerSelect("Uploaded Answer"); // Mark as answered
-                setShowMistakes(true); // Auto show mistakes initially
-            } catch (err) {
-                alert("Failed to evaluate answer. Please ensure the image is clear.");
-            } finally {
-                setIsEvaluating(false);
-            }
-        };
-      } catch (e) {
+        const base64String = e.target.result.split(',')[1];
+        const mimeType = selectedFile.type || "image/jpeg";
+        
+        // Use the explicit marks assigned to the question, or fallback to heuristics if missing
+        const maxMarks = question.marks || (question.type === 'VeryShort' ? 2 : question.type === 'Short' ? 3 : 5);
+
+        try {
+            const result = await evaluateAnswer(
+                question.question, 
+                question.modelAnswer || '', 
+                base64String, 
+                mimeType,
+                maxMarks
+            );
+            
+            setEvaluation(result);
+            onAnswerSelect("Uploaded Answer"); // Mark question as answered
+            setShowMistakes(true); // Auto show mistakes
+        } catch (err) {
+            console.error(err);
+            alert(`Evaluation failed: ${err instanceof Error ? err.message : "Please check your connection or API key."}`);
+        } finally {
+            setIsEvaluating(false);
+        }
+      };
+
+      reader.onerror = () => {
           setIsEvaluating(false);
-      }
+          alert("Failed to read the file.");
+      };
+
+      reader.readAsDataURL(selectedFile);
   };
 
   const renderQuestionContent = () => {
-      // For MCQ and FillBlanks, input is below. For Subjective, upload button is here in header.
       return (
         <div className="relative p-6 bg-slate-800 rounded-xl border border-slate-700 shadow-lg mb-6 transform transition-all hover:border-slate-600">
             <div className="flex justify-between items-start mb-4">
@@ -136,6 +154,10 @@ const QuizView: React.FC<QuizViewProps> = ({
                     </span>
                     <span className="px-2 py-0.5 rounded text-xs bg-slate-700 text-purple-300 border border-slate-600 shadow-sm">
                         {question.type}
+                    </span>
+                    {/* Marks Badge */}
+                    <span className="ml-1 px-2 py-0.5 rounded text-xs bg-slate-900 text-yellow-500 border border-yellow-500/30 font-mono shadow-sm">
+                         [ {question.marks || 1} Marks ]
                     </span>
                 </div>
                 
@@ -337,7 +359,7 @@ const QuizView: React.FC<QuizViewProps> = ({
       <div key={questionNumber} className="flex-grow overflow-y-auto pr-1">
         
         {/* Question Area */}
-        <div className="animate-slide-up opacity-0" style={{ animationFillMode: 'forwards' }}>
+        <div className="animate-slide-up">
             {renderQuestionContent()}
         </div>
 
@@ -346,33 +368,44 @@ const QuizView: React.FC<QuizViewProps> = ({
             {question.type === 'MCQ' && question.options && (
                 <div className="space-y-3">
                 {question.options.map((option, index) => {
-                    let btnClass = "bg-slate-700 hover:bg-slate-600 border-slate-600";
+                    const cleanUserAnswer = userAnswer ? userAnswer.trim() : null;
+                    const cleanOption = option.trim();
+                    const cleanCorrectAnswer = question.correctAnswer ? question.correctAnswer.trim() : "";
+                    
+                    // Robust check: option is correct if matches the answer key
+                    const isOptionCorrect = cleanOption === cleanCorrectAnswer;
+                    const isOptionSelected = cleanOption === cleanUserAnswer;
+
+                    let btnClass = "bg-slate-700 hover:bg-slate-600 border-slate-600 shadow-sm";
                     let feedbackClass = "";
+                    let indicator = null;
+
                     if (hasAnswered) {
-                        if (option === question.correctAnswer) {
+                        if (isOptionCorrect) {
+                            // Correct Answer (Selected or Not) - Green
                             btnClass = "bg-green-600/20 border-green-500 text-green-100 ring-1 ring-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]";
                             feedbackClass = "animate-pop";
+                            indicator = <span className="absolute right-4 top-1/2 -translate-y-1/2 text-green-400 font-bold text-xl animate-pop">✓</span>;
+                        } else if (isOptionSelected) {
+                            // Selected Wrong Answer - Red
+                            btnClass = "bg-red-600/20 border-red-500 text-red-100 ring-1 ring-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]";
+                            indicator = <span className="absolute right-4 top-1/2 -translate-y-1/2 text-red-400 font-bold text-xl">✗</span>;
+                        } else {
+                            // Other options - Dimmed but visible
+                            btnClass = "bg-slate-800/60 border-slate-700/50 text-slate-500 opacity-70";
                         }
-                        else if (option === userAnswer) {
-                            btnClass = "bg-red-600/20 border-red-500 text-red-100 ring-1 ring-red-500";
-                        }
-                        else btnClass = "bg-slate-800 opacity-50 border-slate-700";
                     }
+
                     return (
                         <button
                             key={index}
                             onClick={() => onAnswerSelect(option)}
                             disabled={hasAnswered}
-                            className={`w-full text-left p-4 rounded-lg border transition-all duration-300 ${btnClass} disabled:cursor-not-allowed group relative overflow-hidden animate-slide-up opacity-0 ${feedbackClass}`}
+                            className={`w-full text-left p-4 rounded-lg border transition-all duration-300 ${btnClass} disabled:cursor-not-allowed group relative overflow-hidden animate-slide-up ${feedbackClass}`}
                             style={{ animationDelay: `${(index + 1) * 75}ms`, animationFillMode: 'forwards' }}
                         >
                             <span className="font-medium relative z-10">{option}</span>
-                            {hasAnswered && option === question.correctAnswer && (
-                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-green-400 font-bold text-xl animate-pop">✓</span>
-                            )}
-                            {hasAnswered && option === userAnswer && option !== question.correctAnswer && (
-                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-red-400 font-bold text-xl">✗</span>
-                            )}
+                            {indicator}
                         </button>
                     );
                 })}
@@ -380,7 +413,7 @@ const QuizView: React.FC<QuizViewProps> = ({
             )}
 
             {question.type === 'FillBlanks' && (
-                <div className="space-y-4 animate-slide-up opacity-0" style={{ animationDelay: '150ms', animationFillMode: 'forwards' }}>
+                <div className="space-y-4 animate-slide-up" style={{ animationDelay: '150ms', animationFillMode: 'forwards' }}>
                     <input
                         ref={inputRef}
                         type="text"
@@ -410,18 +443,18 @@ const QuizView: React.FC<QuizViewProps> = ({
                 </div>
             )}
 
-            <div className="animate-slide-up opacity-0" style={{ animationDelay: '100ms', animationFillMode: 'forwards' }}>
+            <div className="animate-slide-up" style={{ animationDelay: '100ms', animationFillMode: 'forwards' }}>
                  {renderSubjectiveFeedback()}
             </div>
 
             {/* Explanation for MCQ */}
             {hasAnswered && question.type === 'MCQ' && (
-            <div className="mt-6 p-4 bg-purple-900/20 rounded-lg border border-purple-500/30 animate-slide-up" style={{ animationDelay: '300ms' }}>
-                <h3 className="font-bold text-sm uppercase text-purple-300 mb-2 flex items-center gap-2">
-                    <span className="bg-purple-500 w-1 h-4 rounded-full"></span>
-                    Explanation
+            <div className="mt-6 p-5 bg-gradient-to-br from-purple-900/40 to-slate-900/40 rounded-xl border border-purple-500/30 animate-slide-up shadow-lg relative overflow-hidden" style={{ animationDelay: '300ms' }}>
+                 <div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div>
+                 <h3 className="font-bold text-base text-purple-300 mb-2 flex items-center gap-2">
+                    💡 Explanation
                 </h3>
-                <p className="text-slate-300 text-sm leading-relaxed">{question.explanation}</p>
+                <p className="text-slate-200 text-sm leading-relaxed">{question.explanation || "No explanation provided."}</p>
             </div>
             )}
         </div>

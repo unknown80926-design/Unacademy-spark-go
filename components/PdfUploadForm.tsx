@@ -111,17 +111,20 @@ const PdfUploadForm: React.FC<PdfUploadFormProps> = ({ onGenerate, error }) => {
         </div>
         
         {/* Exam Context Prompt */}
-        <div>
-           <label htmlFor="examContext" className="block text-sm font-medium text-slate-300 mb-2">
-             Exam Focus / Instructions <span className="text-purple-400 text-xs">(AI uses this to style answers)</span>
+        <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+           <label htmlFor="examContext" className="block text-sm font-bold text-purple-300 mb-2">
+             Exam Focus / Instructions
            </label>
+           <p className="text-xs text-slate-400 mb-2">
+             Tell the AI which exam you are preparing for (e.g. "CBSE Class 10", "JEE Mains", "Strict Marking"). The questions and model answers will be tailored to this.
+           </p>
            <textarea
              id="examContext"
              value={examContext}
              onChange={(e) => setExamContext(e.target.value)}
-             placeholder="e.g. CBSE Class 10 Board Exam, strict marking, focus on keywords..."
-             rows={2}
-             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 px-3 text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition text-sm"
+             placeholder="e.g. CBSE Class 10 Science Board Exam. Focus on chemical reactions and balance equations. Give point-wise answers."
+             rows={3}
+             className="w-full bg-slate-900 border border-slate-600 rounded-md py-2 px-3 text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition text-sm placeholder-slate-500"
            />
         </div>
 

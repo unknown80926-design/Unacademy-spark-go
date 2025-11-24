@@ -16,6 +16,7 @@ export interface QuizQuestion {
   modelAnswer?: string; // For Subjective types (Topper answer)
   context?: string; // For Case/Extract based
   explanation?: string; // General concept explanation
+  marks?: number; // Marks assigned to this question
 }
 
 export interface User {

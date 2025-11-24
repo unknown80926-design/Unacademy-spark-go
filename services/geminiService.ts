@@ -81,6 +81,19 @@ const quizSchema = {
   required: ['questions'],
 };
 
+function getMarksForType(type: string): number {
+    switch (type) {
+        case 'MCQ': return 1;
+        case 'FillBlanks': return 1;
+        case 'VeryShort': return 2;
+        case 'Short': return 3;
+        case 'CaseBased': return 4;
+        case 'ExtractBased': return 4;
+        case 'Long': return 5;
+        default: return 1;
+    }
+}
+
 
 /**
  * Generates a quiz using the Gemini API based on the provided text.
@@ -100,23 +113,25 @@ export async function generateQuiz(
 
   let typeInstructions = "";
   
+  const contextLabel = examContext ? `"${examContext}"` : "Standard Board Exam";
+
   if (questionType === 'MCQ') {
-    typeInstructions = `Generate Multiple Choice Questions. Provide 4 options and 1 correct answer.`;
+    typeInstructions = `Generate Multiple Choice Questions suitable for ${contextLabel}. Provide 4 options and 1 correct answer.`;
   } else if (questionType === 'FillBlanks') {
-    typeInstructions = `Generate Fill in the Blank questions. The question text must contain "______" where the word goes. 'correctAnswer' must be the missing word(s). Do not provide options.`;
+    typeInstructions = `Generate Fill in the Blank questions suitable for ${contextLabel}. The question text must contain "______" where the word goes. 'correctAnswer' must be the missing word(s). Do not provide options.`;
   } else if (['Short', 'VeryShort', 'Long', 'Brief'].includes(questionType)) {
     typeInstructions = `Generate ${questionType} Answer Type Questions. 
-    CRITICAL: You are an expert Board Examiner (e.g., CBSE Class 10/12). 
+    CRITICAL: You are an expert Examiner for ${contextLabel}. 
     - You MUST provide a 'modelAnswer' field.
-    - The 'modelAnswer' must be a "Topper's Answer".
-    - Analyze previous board topper sheets: use point-wise answers, highlight keywords, and structure the answer exactly how a student needs to write it to get FULL MARKS.
+    - The 'modelAnswer' must be a "Topper's Answer" that scores full marks in ${contextLabel}.
+    - Analyze strictly based on ${contextLabel} marking schemes: use point-wise answers, highlight keywords, and structure the answer exactly how a student needs to write it.
     - Do not just copy the PDF text. Synthesize a perfect exam answer.
     - 'options' and 'correctAnswer' fields should be empty/null.`;
   } else if (['CaseBased', 'ExtractBased'].includes(questionType)) {
-     typeInstructions = `Generate ${questionType} questions.
+     typeInstructions = `Generate ${questionType} questions suitable for ${contextLabel}.
      - Select a relevant paragraph or case from the text and put it in the 'context' field.
      - Ask a question based on that context.
-     - Provide a 'modelAnswer' that yields full marks based on the context.`;
+     - Provide a 'modelAnswer' that yields full marks based on the context and ${contextLabel} standards.`;
   }
 
   const prompt = `
@@ -144,7 +159,7 @@ export async function generateQuiz(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-flash-latest",
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -167,7 +182,8 @@ export async function generateQuiz(
         correctAnswer: q.correctAnswer || "",
         modelAnswer: q.modelAnswer || "",
         context: q.context || "",
-        explanation: q.explanation || ""
+        explanation: q.explanation || "",
+        marks: getMarksForType(questionType) // Assign marks based on type
     }));
 
     return validatedQuestions;
@@ -184,6 +200,7 @@ export async function evaluateAnswer(
   question: string,
   modelAnswer: string,
   imageBase64: string,
+  mimeType: string,
   maxMarks: number
 ): Promise<EvaluationResult> {
     if (!process.env.API_KEY) {
@@ -221,10 +238,10 @@ export async function evaluateAnswer(
 
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-3-pro-preview",
             contents: {
                 parts: [
-                    { inlineData: { mimeType: "image/jpeg", data: imageBase64 } },
+                    { inlineData: { mimeType: mimeType, data: imageBase64 } },
                     { text: prompt }
                 ]
             },
