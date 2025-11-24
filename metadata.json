@@ -1,0 +1,5 @@
+{
+  "name": "PDF to Quiz Generator",
+  "description": "An application that generates a multiple-choice quiz from an uploaded PDF document using AI. Users can name their quiz, specify the number of questions, and take the quiz with immediate feedback. Includes a browser to find and take quizzes created by the community.",
+  "requestFramePermissions": []
+}
